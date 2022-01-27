@@ -2,7 +2,7 @@
 A Real Time Clock for the Microprofessor based on a MSM5832
 
 This used the Z80-PIO to interface the MSM5832. Currently only the 
-rudimnts are implemented to write and read the RTC and display time
+rudiments are implemented to write and read the RTC and display time
 and date.
 
 The hardware diagram:
