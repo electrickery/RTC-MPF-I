@@ -1,0 +1,372 @@
+Z80-Assembler	Release 1.9	Thu Jan 27 16:33:47 2022	Page 1
+Source file: rtcDemo.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+                       1      1 ; RTC_MPF-I - Real Time Clock
+                       2      2 
+                       3      3 
+0080                   4      4 PIOBASE:  EQU 080h
+0080                   5      5 PIODA:  EQU     PIOBASE        ; DATA PORT OF PIO   CHANNEL A; address & control: output
+0080                   6      6 R_ADCT: EQU     PIODA
+0081                   7      7 PIODB:  EQU     PIOBASE + 1h   ; DATA PORT OF PIO   CHANNEL B; data read/write: input & output
+0081                   8      8 R_DATA: EQU     PIODB
+0082                   9      9 PIOCA:  EQU     PIOBASE + 2h   ; CONTROL PORT OF PIO  CHANNEL A; address & control: output
+0082                  10     10 R_ACDR: EQU     PIOCA
+0083                  11     11 PIOCB:  EQU     PIOBASE + 3h   ; CONTROL PORT OF PIO  CHANNEL B; data read/write: input & output
+0083                  12     12 R_DDRR:  EQU    PIOCB          ; rtc data port direction register
+                      13     13 
+000f                  14     14 PIODW:  EQU     00001111b       ; mode 0: output
+004f                  15     15 PIODR:  EQU     01001111b       ; mode 1: input
+0007                  16     16 PIOICW: EQU     00000111b       ; Interrupt Control Word: disable interrupt
+0003                  17     17 PIOIDW: EQU     00000011b       ; Interrupt Disable Word: disable interrupt
+                      18     18 
+0010                  19     19 RTCHOLD EQU     010h
+0020                  20     20 RTCREAD EQU     020h
+0040                  21     21 RTCWRIT EQU     040h
+000f                  22     22 RTCDMSK EQU     00Fh    ; RTC address mask
+00df                  23     23 RTCNORD EQU     RTCREAD ^ 0FFh
+00bf                  24     24 RTCNOWR EQU     RTCWRIT ^ 0FFh
+                      25     25 ; masks in dual BCD mode as used in RTCBUF
+007f                  26     26 RTC_MIM EQU     01111111b ; minute mask
+0000                  27     27 RTC_AM  EQU     00000000b ; 
+0040                  28     28 RTC_PM  EQU     01000000b ; the PM clock bit 
+0000                  29     29 RTC_12h EQU     00000000b ; 
+0080                  30     30 RTC_24h EQU     10000000b ; the 24 hour clock bit in dual BCD mode
+003f                  31     31 RTC_HRM EQU     (RTC_PM | RTC_24h) ^ 0FFh ; reverse mask for the extra bits
+0040                  32     32 RTC_lpy EQU     01000000b ; leap year flag for Feb 29, D2 > bit 6
+00bf                  33     33 RTC_DYM EQU     RTC_lpy ^ 0FFh ; reverse mask
+001f                  34     34 RTC_MNM EQU     00011111b ; month mask
+                      35     35 
+                      36     36 ; most use two addresses, but not the day-in-week
+0000                  37     37 SC1AD:  EQU     0   ; second
+0002                  38     38 MI1AD:  EQU     2   ; minute
+0004                  39     39 HR1AD:  EQU     4   ; hour,  HR10AD uses D2 for AM/PM, D3 for 12/24 hour clock
+0006                  40     40 WDAD:   EQU     6   ; day-in-week
+0007                  41     41 DY1AD:  EQU     7   ; day-in month
+0009                  42     42 MO1AD:  EQU     9   ; month
+000b                  43     43 YR1AD:  EQU     11  ; year in century
+                      44     44 
+0015                  45     45 W150C:  EQU     21 ; ~15us at 1.79 MHz
+                      46     46 
+0030                  47     47 MPFMON: EQU     0030h
+05fe                  48     48 SCAN:   EQU     05FEh
+0678                  49     49 HEX7SG: EQU     0678h
+                      50     50 
+                      51     51 ; init
+                      52     52 
+                      53     53 ; read cycle:
+                      54     54 ; data-direction input
+                      55     55 ; assert HOLD & wait 150 us
+                      56     56 ; RLOOP:
+                      57     57 ; assert HOLD & READ
+                      58     58 ; assert address
+                      59     59 ; read data
+                      60     60 ; de-assert READ (not required, but convenient in code structure)
+Z80-Assembler	Release 1.9	Thu Jan 27 16:33:47 2022	Page 2
+Source file: rtcDemo.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+                      61     61 ; repeat from RLOOP until done
+                      62     62 ; de-assert READ
+                      63     63 
+                      64     64 ; write cycle:
+                      65     65 ; data-direction output
+                      66     66 ; assert HOLD & wait 150 us
+                      67     67 ; WLOOP:
+                      68     68 ; assert address & data
+                      69     69 ; assert WRITE
+                      70     70 ; de-assert WRITE
+                      71     71 ; repeat from WLOOP until done
+                      72     72 ; deassert address & HOLD
+                      73     73 ; data-direction input
+                      74     74 
+                      75     75         ORG     1900H
+                      76     76 ; data here stored as BCD
+                      77     77 RTCBUF:
+1900  00              78     78         DEFB    00      ; seconds RTCBUF+0
+1901  00              79     79         DEFB    00      ; minutes RTCBUF+1
+1902  00              80     80         DEFB    00      ; hours   RTCBUF+2
+1903  00              81     81         DEFB    00      ; day-of-week
+1904  00              82     82         DEFB    00      ; days    RTCBUF+4
+1905  00              83     83         DEFB    00      ; months  RTCBUF+5
+1906  00              84     84         DEFB    00      ; years   RTCBUF+6
+                      85     85     
+                      86     86 DISPBUF:                ; six digits, from right to left
+1907  00 00           87     87         DEFW    0000    ; seconds / years
+1909  00 00           88     88         DEFW    0000    ; minutes / months
+190b  00 00           89     89         DEFW    0000    ; hours   / days
+                      90     90 
+                      91     91         ORG     2000h
+                      92     92 
+                      93     93 INIT:   
+2000  c3 0f 20        94     94         JP      INIT_R
+                      95     95         
+                      96     96 READ:
+2003  c3 2a 20        97     97         JP      READ_R
+                      98     98 
+                      99     99 WRITE:
+2006  c3 a2 20       100    100         JP      WRITE_R
+                     101    101 
+                     102    102 DSPTM:
+2009  c3 54 21       103    103         JP      SHOWTIM
+                     104    104         
+                     105    105 DSPDT:
+200c  c3 59 21       106    106         JP      SHOWDAT
+                     107    107 
+                     108    108 INIT_R:
+200f  cd 13 20       109    109         CALL    INIT_C
+2012  c7             110    110         RST     0
+                     111    111         
+                     112    112 INIT_C:
+                     113    113 ; Channel pre-config
+2013  3e 03          114    114         LD      A, PIOIDW
+2015  d3 82          115    115         OUT     (PIOCA), A  ; channel A interrupt disable
+2017  d3 83          116    116         OUT     (PIOCB), B  ; channel B interrupt disable
+                     117    117         
+                     118    118 ; Channel A final configuration, address & control port
+2019  3e 00          119    119         LD      A, 0h
+201b  d3 80          120    120         OUT     (R_ADCT), A  ; zero addr/ctrl before setting output mode
+Z80-Assembler	Release 1.9	Thu Jan 27 16:33:47 2022	Page 3
+Source file: rtcDemo.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+201d  3e 0f          121    121         LD      A, PIODW
+201f  d3 82          122    122         OUT     (R_ACDR), A   ; addr/ctrl port, channel A output mode
+                     123    123         
+                     124    124 ; Channel B initial configuration, data port 
+2021  3e 00          125    125         LD      A, 0h
+2023  d3 80          126    126         OUT     (R_ADCT), A   ; zero data before setting output mode
+2025  3e 4f          127    127         LD      A, PIODR
+2027  d3 83          128    128         OUT     (R_DDRR), A   ; data port, channel B input mode
+                     129    129         
+2029  c9             130    130         RET
+                     131    131         
+                     132    132 READ_R:
+202a  cd 2e 20       133    133         CALL    READ_C
+202d  c7             134    134         RST     0
+                     135    135         
+                     136    136 READ_C:
+202e  3e 4f          137    137         LD      A, PIODR
+2030  d3 83          138    138         OUT     (R_DDRR), A  ; data port, channel B input mode
+2032  3e 10          139    139         LD      A, RTCHOLD
+2034  d3 80          140    140         OUT     (R_ADCT), A  ; assert HOLD
+2036  cd 11 21       141    141         CALL    WAIT150u
+                     142    142         
+2039  21 00 19       143    143         LD      HL, RTCBUF
+203c  3e 00          144    144         LD      A, SC1AD    ; second nibbles
+203e  cd 8c 20       145    145         CALL    RD2NIB
+2041  77             146    146         LD      (HL), A     ; store in buffer
+                     147    147         
+2042  23             148    148         INC     HL
+2043  3e 02          149    149         LD      A, MI1AD    ; minute nibbles
+2045  cd 8c 20       150    150         CALL    RD2NIB
+2048  e6 7f          151    151         AND     RTC_MIM
+204a  77             152    152         LD      (HL), A     ; store in buffer
+                     153    153         
+204b  23             154    154         INC     HL
+204c  3e 04          155    155         LD      A, HR1AD
+204e  cd 8c 20       156    156         CALL    RD2NIB      ; hour nibbles
+2051  e6 3f          157    157         AND     RTC_HRM     ; mask off PM & 24h bits
+2053  77             158    158         LD      (HL), A     ; store in buffer
+                     159    159         
+2054  23             160    160         INC     HL
+2055  3e 06          161    161         LD      A, WDAD     ; week-day nibble
+2057  cd 77 20       162    162         CALL    RD1NIB
+205a  77             163    163         LD      (HL), A     ; store in buffer
+                     164    164         
+205b  23             165    165         INC     HL
+205c  3e 07          166    166         LD      A, DY1AD    ; day-of month nibbles
+205e  cd 8c 20       167    167         CALL    RD2NIB
+2061  e6 bf          168    168         AND     RTC_DYM     ; mask leap year flag
+2063  77             169    169         LD      (HL), A     ; store in buffer
+                     170    170         
+2064  23             171    171         INC     HL
+2065  3e 09          172    172         LD      A, MO1AD    ; month nibbles
+2067  cd 8c 20       173    173         CALL    RD2NIB
+206a  77             174    174         LD      (HL), A     ; store in buffer
+                     175    175         
+206b  23             176    176         INC     HL
+206c  3e 0b          177    177         LD      A, YR1AD    ; year in century nibbles
+206e  cd 8c 20       178    178         CALL    RD2NIB
+2071  77             179    179         LD      (HL), A     ; store in buffer
+                     180    180 
+Z80-Assembler	Release 1.9	Thu Jan 27 16:33:47 2022	Page 4
+Source file: rtcDemo.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+2072  3e 00          181    181         LD      A, 0
+2074  d3 80          182    182         OUT     (R_ADCT), A  ; de-assert HOLD
+                     183    183                 
+2076  c9             184    184         RET
+                     185    185       
+                     186    186 RD1NIB:                     ; read one nibble, expects RTC address in A, 
+2077  c5             187    187         PUSH    BC
+2078  f6 10          188    188         OR      RTCHOLD
+207a  4f             189    189         LD      C, A        ; keep address + HOLD
+207b  d3 80          190    190         OUT     (R_ADCT), A  ; address + HOLD out
+207d  f6 30          191    191         OR      RTCHOLD | RTCREAD
+207f  d3 80          192    192         OUT     (R_ADCT), A  ; address + HOLD + READ out
+                     193    193         
+2081  db 81          194    194         IN      A, (R_DATA)  ; data in
+2083  e6 0f          195    195         AND     RTCDMSK     ; mask upper nibble
+2085  47             196    196         LD      B, A        ; keep value from RTC
+2086  79             197    197         LD      A, C
+2087  d3 80          198    198         OUT     (R_ADCT), A  ; address + HOLD out
+2089  78             199    199         LD      A, B
+                     200    200         
+208a  c1             201    201         POP     BC
+208b  c9             202    202         RET
+                     203    203 
+                     204    204 RD2NIB:                     ; read two consecutive nibbles, expects 
+                     205    205                             ; first RTC address in A
+208c  c5             206    206         PUSH    BC
+208d  47             207    207         LD      B, A        ; keep address
+208e  cd 77 20       208    208         CALL    RD1NIB
+2091  4f             209    209         LD      C, A        ; keep lower nibble
+2092  78             210    210         LD      A, B        ; restore address
+2093  3c             211    211         INC     A           ; point to next
+2094  cd 77 20       212    212         CALL    RD1NIB
+2097  cb 07          213    213         RLC     A           ; shift to upper nibble
+2099  cb 07          214    214         RLC     A
+209b  cb 07          215    215         RLC     A
+209d  cb 07          216    216         RLC     A
+209f  b1             217    217         OR      C           ; combine nibbles
+20a0  c1             218    218         POP     BC
+20a1  c9             219    219         RET
+                     220    220   
+                     221    221 WRITE_R:
+20a2  cd a6 20       222    222         CALL    WRITE_C
+20a5  c7             223    223         RST     0
+                     224    224         
+                     225    225 WRITE_C:
+20a6  3e 0f          226    226         LD      A, PIODW
+20a8  d3 83          227    227         OUT     (R_DDRR), A  ; data port, channel B output mode
+20aa  3e 10          228    228         LD      A, RTCHOLD
+20ac  d3 80          229    229         OUT     (R_ADCT), A
+20ae  cd 11 21       230    230         CALL    WAIT150u
+                     231    231         
+20b1  21 00 19       232    232         LD      HL, RTCBUF
+20b4  46             233    233         LD      B, (HL)
+20b5  3e 10          234    234         LD      A, SC1AD | RTCHOLD   ; second nibbles
+20b7  cd ff 20       235    235         CALL    WR2NIB
+                     236    236         
+20ba  23             237    237         INC     HL
+20bb  46             238    238         LD      B, (HL)
+20bc  3e 12          239    239         LD      A, MI1AD | RTCHOLD    ; minute nibbles
+20be  cd ff 20       240    240         CALL    WR2NIB
+Z80-Assembler	Release 1.9	Thu Jan 27 16:33:47 2022	Page 5
+Source file: rtcDemo.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+                     241    241         
+20c1  23             242    242         INC     HL
+20c2  46             243    243         LD      B, (HL)
+20c3  3e 14          244    244         LD      A, HR1AD | RTCHOLD
+20c5  cd ff 20       245    245         CALL    WR2NIB      ; hour nibbles
+                     246    246         
+20c8  23             247    247         INC     HL
+20c9  7e             248    248         LD      A, (HL)
+20ca  f6 80          249    249         OR      RTC_24h               ; add the 24 hour clock bit
+20cc  47             250    250         LD      B, A
+20cd  3e 16          251    251         LD      A, WDAD | RTCHOLD     ; day-of-week nibble
+20cf  cd f0 20       252    252         CALL    WR1NIB
+                     253    253 
+20d2  23             254    254         INC     HL
+20d3  46             255    255         LD      B, (HL)
+20d4  3e 17          256    256         LD      A, DY1AD | RTCHOLD
+20d6  cd ff 20       257    257         CALL    WR2NIB      ; day-of-month nibbles
+                     258    258         
+20d9  23             259    259         INC     HL
+20da  46             260    260         LD      B, (HL)
+20db  3e 19          261    261         LD      A, MO1AD | RTCHOLD
+20dd  cd ff 20       262    262         CALL    WR2NIB      ; month nibbles
+                     263    263         
+20e0  23             264    264         INC     HL
+20e1  46             265    265         LD      B, (HL)
+20e2  3e 1b          266    266         LD      A, YR1AD | RTCHOLD
+20e4  cd ff 20       267    267         CALL    WR2NIB      ; year-in-century nibbles
+                     268    268         
+20e7  3e 00          269    269         LD      A, 0
+20e9  d3 80          270    270         OUT     (R_ADCT), A  ; de-assert HOLD
+                     271    271         
+20eb  3e 4f          272    272         LD      A, PIODR
+20ed  d3 83          273    273         OUT     (R_DDRR), A  ; data port, channel B input mode
+                     274    274 
+20ef  c9             275    275         RET
+                     276    276         
+                     277    277 WR1NIB:                       ; write a nibble from (HL) to RTC
+20f0  d3 80          278    278         OUT     (R_ADCT), A   ; address & hold out
+20f2  0e 81          279    279         LD      C, R_DATA
+20f4  ed 41          280    280         OUT     (C), B        ; data out
+20f6  f6 40          281    281         OR      RTCWRIT
+20f8  d3 80          282    282         OUT     (R_ADCT), A   ; assert write
+20fa  e6 bf          283    283         AND     RTCNOWR       
+20fc  d3 80          284    284         OUT     (R_ADCT), A   ; de-assert write
+                     285    285 
+20fe  c9             286    286         RET
+                     287    287 
+                     288    288 WR2NIB:                     ; write nibbles from (HL) and (HL+1) to RTC
+20ff  f5             289    289         PUSH    AF          ; save RTC address
+2100  cd f0 20       290    290         CALL    WR1NIB
+2103  f1             291    291         POP     AF          ; restore RTC address
+2104  3c             292    292         INC     A           ; point to next 10's address, HOLD not effected
+2105  cb 08          293    293         RRC     B
+2107  cb 08          294    294         RRC     B
+2109  cb 08          295    295         RRC     B
+210b  cb 08          296    296         RRC     B
+210d  cd f0 20       297    297         CALL    WR1NIB
+2110  c9             298    298         RET
+                     299    299         
+                     300    300 WAIT150u:
+Z80-Assembler	Release 1.9	Thu Jan 27 16:33:47 2022	Page 6
+Source file: rtcDemo.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+2111  f5             301    301         PUSH    AF
+2112  c5             302    302         PUSH    BC
+2113  06 15          303    303         LD      B, W150C
+                     304    304 W150LP:
+2115  10 fe          305    305         DJNZ    W150LP		; Wait
+2117  c1             306    306         POP     BC
+2118  f1             307    307         POP     AF
+2119  c9             308    308         RET
+                     309    309 
+                     310    310 DSPT_R:
+211a  21 07 19       311    311         LD      HL, DISPBUF
+211d  3a 00 19       312    312         LD      A, (RTCBUF)     ; seconds
+2120  cd 78 06       313    313         CALL    HEX7SG
+2123  3a 01 19       314    314         LD      A,(RTCBUF+1)    ; minutes
+2126  cd 78 06       315    315         CALL    HEX7SG
+2129  3a 02 19       316    316         LD      A,(RTCBUF+2)    ; hours
+212c  cd 78 06       317    317         CALL    HEX7SG
+212f  dd 21 07 19    318    318         LD      IX, DISPBUF
+2133  cd fe 05       319    319         CALL    SCAN
+                     320    320         
+2136  c7             321    321         RST     0
+                     322    322 
+                     323    323 DSPD_R:
+2137  21 07 19       324    324         LD      HL, DISPBUF
+213a  3a 06 19       325    325         LD      A, (RTCBUF+6)   ; years
+213d  cd 78 06       326    326         CALL    HEX7SG
+2140  3a 05 19       327    327         LD      A,(RTCBUF+5)    ; months
+2143  cd 78 06       328    328         CALL    HEX7SG
+2146  3a 04 19       329    329         LD      A,(RTCBUF+4)    ; day-of-month
+2149  cd 78 06       330    330         CALL    HEX7SG
+214c  dd 21 07 19    331    331         LD      IX, DISPBUF
+2150  cd fe 05       332    332         CALL    SCAN
+                     333    333         
+2153  c7             334    334         RST     0
+                     335    335 
+                     336    336 SHOWTIM:
+2154  cd 2e 20       337    337         CALL    READ_C
+2157  18 c1          338    338         JR      DSPT_R
+                     339    339         
+                     340    340 SHOWDAT:
+2159  cd 2e 20       341    341         CALL    READ_C
+215c  18 d9          342    342         JR      DSPD_R
