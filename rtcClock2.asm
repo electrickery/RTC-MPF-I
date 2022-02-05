@@ -29,14 +29,14 @@ LITES:  EQU     0C0h                ;LIGHT PORT for debug
 ;           CTC Constants
 CCW:    EQU     1
 INTEN:  EQU     80h     ; Interrupt enable
-CTRMODE:  EQU   40h     ; Counter mode
+CTRMODE:EQU     40h     ; Counter mode
 P256:   EQU     20h     ; Prescaler 256
 RISEDO: EQU     10h     ; Rising Edge Trigger
 PSTRT:  EQU     8       ; Trigger by CLK/TRG
 TCLOAD: EQU     4       ; Time constant in following byte load (TIME)
 RESET:  EQU     2       ; Software Reset
 TIMER:  EQU     84      ; CTC TIMER VALUE 
-COUNTER: EQU    83      ; ISR COUNT1 value
+COUNTER:EQU     83      ; ISR COUNT value
 
 ;            PIO ports
 PIOBASE:EQU     080h
@@ -120,7 +120,7 @@ STAK:   EQU     $
 COUNT:  DEFS    1       ;ICT COUNT VALUE
 SECFLAG:DEFS    1       ; second boundary flag, triggers RTCBUF update 
 RTCRDFL:DEFS    1       ; clock update from RTC flag, triggers READ_C call
-POINTON:DEFS    1       ; point on right digit on flag
+POINTON:DEFS    1       ; point on right digit on flag, used to flag an RTC access
 POINTBT:EQU     01000000b ; the point is bit 6. UM, p37
 
 MROFFS: EQU     RTCBUF - MANBUF ; This offset is handy with LD (IX+MROFFS),A
@@ -177,20 +177,20 @@ NO_SEC:                         ; no second passed
 INIT:
 ; PIO Channel pre-config
         LD      A, PIOIDW
-        OUT     (PIOCA), A  ; channel A interrupt disable
-        OUT     (PIOCB), B  ; channel B interrupt disable
+        OUT     (PIOCA), A      ; channel A interrupt disable
+        OUT     (PIOCB), B      ; channel B interrupt disable
         
 ; PIO Channel A final configuration, address & control port
         LD      A, 0h
-        OUT     (R_ADCT), A  ; zero addr/ctrl before setting output mode
+        OUT     (R_ADCT), A     ; zero addr/ctrl before setting output mode
         LD      A, PIODW
-        OUT     (R_ACDR), A   ; addr/ctrl port, channel A output mode
+        OUT     (R_ACDR), A     ; addr/ctrl port, channel A output mode
         
 ; PIO Channel B initial configuration, data port 
         LD      A, 0h
-        OUT     (R_ADCT), A   ; zero data before setting output mode
+        OUT     (R_ADCT), A     ; zero data before setting output mode
         LD      A, PIODR
-        OUT     (R_DDRR), A   ; data port, channel B input mode
+        OUT     (R_DDRR), A     ; data port, channel B input mode
 
 ; CTC0 init 
         LD      A, INTEN + P256 + TCLOAD + RESET + CCW
