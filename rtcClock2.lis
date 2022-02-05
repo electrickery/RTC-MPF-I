@@ -1,0 +1,664 @@
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 1
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+                       1      1 ;           RTC & CTC demo program for MicroProfessor MPF-I(B)
+                       2      2 
+                       3      3 ; Based on Zilog Z80 Family Data Book, January 1989, p 366
+                       4      4 ; by fjkraan@electrickery 2022-01-28
+                       5      5 ; z80asm version (https://github.com/udo-munk/z80pack/tree/master/z80asm)
+                       6      6 ; This program assumes a CTC at port 40h and the standard MPF-I(B) hex
+                       7      7 ; display.
+                       8      8 
+                       9      9 ; MPF-I CPU clock: 1.79 MHz. A prescaler of 256 and a time constant of 84
+                      10     10 ; and a division of again 83 in the ISR results in a counter update 
+                      11     11 ; interval of approx. 1 s.
+                      12     12 
+                      13     13 ; RTCCLOCK version 0.3, 2022-02-05
+                      14     14 
+                      15     15 ;           Memory organisation
+1980                  16     16 RAM:    EQU     1980h
+2200                  17     17 ROM:    EQU     2200h
+0090                  18     18 RAMSIZ: EQU     90h
+                      19     19 
+                      20     20 ;           CTC ports
+                      21     21 
+0040                  22     22 CTCBASE:EQU     40h
+0040                  23     23 CTC0:   EQU     CTCBASE + 0         ;CTC 0 PORT
+0041                  24     24 CTC1:   EQU     CTCBASE + 1         ;CTC 1 PORT
+0042                  25     25 CTC2:   EQU     CTCBASE + 2         ;CTC 2 PORT
+0043                  26     26 CTC3:   EQU     CTCBASE + 3         ;CTC 3 PORT
+00c0                  27     27 LITES:  EQU     0C0h                ;LIGHT PORT for debug
+                      28     28 
+                      29     29 ;           CTC Constants
+0001                  30     30 CCW:    EQU     1
+0080                  31     31 INTEN:  EQU     80h     ; Interrupt enable
+0040                  32     32 CTRMODE:  EQU   40h     ; Counter mode
+0020                  33     33 P256:   EQU     20h     ; Prescaler 256
+0010                  34     34 RISEDO: EQU     10h     ; Rising Edge Trigger
+0008                  35     35 PSTRT:  EQU     8       ; Trigger by CLK/TRG
+0004                  36     36 TCLOAD: EQU     4       ; Time constant in following byte load (TIME)
+0002                  37     37 RESET:  EQU     2       ; Software Reset
+0054                  38     38 TIMER:  EQU     84      ; CTC TIMER VALUE 
+0053                  39     39 COUNTER: EQU    83      ; ISR COUNT1 value
+                      40     40 
+                      41     41 ;            PIO ports
+0080                  42     42 PIOBASE:EQU     080h
+0080                  43     43 PIODA:  EQU     PIOBASE + 0    ; DATA PORT OF PIO   CHANNEL A; address & control: output
+0080                  44     44 R_ADCT: EQU     PIODA
+0081                  45     45 PIODB:  EQU     PIOBASE + 1    ; DATA PORT OF PIO   CHANNEL B; data read/write: input & output
+0081                  46     46 R_DATA: EQU     PIODB
+0082                  47     47 PIOCA:  EQU     PIOBASE + 2    ; CONTROL PORT OF PIO  CHANNEL A; address & control: output
+0082                  48     48 R_ACDR: EQU     PIOCA
+0083                  49     49 PIOCB:  EQU     PIOBASE + 3    ; CONTROL PORT OF PIO  CHANNEL B; data read/write: input & output
+0083                  50     50 R_DDRR: EQU     PIOCB          ; rtc data port direction register
+                      51     51 
+                      52     52 ;           PIO Constants
+000f                  53     53 PIODW:  EQU     00001111b       ; mode 0: output
+004f                  54     54 PIODR:  EQU     01001111b       ; mode 1: input
+0007                  55     55 PIOICW: EQU     00000111b       ; Interrupt Control Word: disable interrupt
+0003                  56     56 PIOIDW: EQU     00000011b       ; Interrupt Disable Word: disable interrupt
+                      57     57 
+                      58     58 ; Z80 PIO bits to MSM5832 RTC pin mapping
+0010                  59     59 RTCHOLD EQU     010h
+0020                  60     60 RTCREAD EQU     020h
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 2
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+0040                  61     61 RTCWRIT EQU     040h
+000f                  62     62 RTCDMSK EQU     00Fh    ; RTC address mask
+00df                  63     63 RTCNORD EQU     RTCREAD ^ 0FFh
+00bf                  64     64 RTCNOWR EQU     RTCWRIT ^ 0FFh
+                      65     65 ; masks in dual BCD mode as used in READ_C and WRITE_C
+007f                  66     66 RTC_MIM EQU     01111111b ; minute mask
+0000                  67     67 RTC_AM  EQU     00000000b ; 
+0040                  68     68 RTC_PM  EQU     01000000b ; the PM clock bit 
+0000                  69     69 RTC_12h EQU     00000000b ; 
+0080                  70     70 RTC_24h EQU     10000000b ; the 24 hour clock bit in dual BCD mode
+003f                  71     71 RTC_HRM EQU     (RTC_PM | RTC_24h) ^ 0FFh ; reverse mask for the extra bits
+0040                  72     72 RTC_lpy EQU     01000000b ; leap year flag for Feb 29, D2 > bit 6
+00bf                  73     73 RTC_DYM EQU     RTC_lpy ^ 0FFh ; reverse mask
+001f                  74     74 RTC_MNM EQU     00011111b ; month mask
+                      75     75 
+                      76     76 ; MSM5832 registers: most values use two addresses, but not the day-in-week
+0000                  77     77 SC1AD:  EQU     0   ; second
+0002                  78     78 MI1AD:  EQU     2   ; minute
+0004                  79     79 HR1AD:  EQU     4   ; hour,  HR10AD uses D2 for AM/PM, D3 for 12/24 hour clock
+0006                  80     80 WDAD:   EQU     6   ; day-in-week
+0007                  81     81 DY1AD:  EQU     7   ; day-in month
+0009                  82     82 MO1AD:  EQU     9   ; month
+000b                  83     83 YR1AD:  EQU     11  ; year in century
+                      84     84 
+                      85     85 ; DJNZ = (13 Tstates) * W150C + 8 T states. (152,5 us + 4.5 us) = 157 us
+0015                  86     86 W150C:  EQU     21 ; ~150us at 1.79 MHz
+                      87     87 
+                      88     88 ; Monitor ROM routines
+05fe                  89     89 SCAN:   EQU     05FEh       ; 
+0624                  90     90 SCAN1:  EQU     0624h       ; input: (IX), output: carry & A
+0678                  91     91 HEX7SEG:EQU     0678h       ; input: A (2 * BCD), output (HL). HL+2
+                      92     92 
+                      93     93 ;       RAM organisation
+                      94     94         ORG     RAM
+                      95     95 MANBUF:         ; buffer to store BCD values when manually setting time and date
+1980  00              96     96         DEFB    00      ; seconds MANBUF+0
+1981  00              97     97         DEFB    00      ; minutes MANBUF+1
+1982  00              98     98         DEFB    00      ; hours   MANBUF+2
+1983  00              99     99         DEFB    00      ; day-of-week
+1984  00             100    100         DEFB    00      ; days    MANBUF+4
+1985  00             101    101         DEFB    00      ; months  MANBUF+5
+1986  00             102    102         DEFB    00      ; years   MANBUF+6
+                     103    103         
+                     104    104 RTCBUF:                 ; data here stored as binary
+1987  00             105    105         DEFB    00      ; seconds RTCBUF+0
+1988  00             106    106         DEFB    00      ; minutes RTCBUF+1
+1989  00             107    107         DEFB    00      ; hours   RTCBUF+2
+198a  00             108    108         DEFB    00      ; day-of-week
+198b  00             109    109         DEFB    00      ; days    RTCBUF+4
+198c  00             110    110         DEFB    00      ; months  RTCBUF+5
+198d  00             111    111         DEFB    00      ; years   RTCBUF+6
+                     112    112     
+                     113    113 DISPBUF:                ; six digits, from right to left
+198e  00 00          114    114         DEFW    0000    ; seconds / years
+1990  00 00          115    115         DEFW    0000    ; minutes / months
+1992  00 00          116    116         DEFW    0000    ; hours   / days
+                     117    117 
+1994                 118    118         DEFS    64      ;STACK AREA
+19d4                 119    119 STAK:   EQU     $
+19d4                 120    120 COUNT:  DEFS    1       ;ICT COUNT VALUE
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 3
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+19d5                 121    121 SECFLAG:DEFS    1       ; second boundary flag, triggers RTCBUF update 
+19d6                 122    122 RTCRDFL:DEFS    1       ; clock update from RTC flag, triggers READ_C call
+19d7                 123    123 POINTON:DEFS    1       ; point on right digit on flag
+0040                 124    124 POINTBT:EQU     01000000b ; the point is bit 6. UM, p37
+                     125    125 
+0007                 126    126 MROFFS: EQU     RTCBUF - MANBUF ; This offset is handy with LD (IX+MROFFS),A
+1987                 127    127 RB_SC:  EQU     RTCBUF + 0
+1988                 128    128 RB_MI:  EQU     RTCBUF + 1
+1989                 129    129 RB_HR:  EQU     RTCBUF + 2
+                     130    130 
+                     131    131 ;;          *** MAIN PROGRAM ***
+                     132    132 
+                     133    133         ORG     ROM
+2200  c3 18 22       134    134         JP      BEGIN
+                     135    135         
+                     136    136 SETRTC:        
+2203  cd 56 24       137    137         CALL   SETRBUF
+2206  c7             138    138         RST     0
+                     139    139         
+                     140    140 GETRTC:
+2207  cd 01 23       141    141         CALL    READ_C
+220a  c7             142    142         RST     0
+                     143    143 
+                     144    144         ORG     $ & 0FFF0h | 10h
+                     145    145 INTVEC: 
+2210  ae 24          146    146         DEFW    ICTC0
+2212  ab 24          147    147         DEFW    ICTC1
+2214  ab 24          148    148         DEFW    ICTC2
+2216  ab 24          149    149         DEFW    ICTC3
+                     150    150         
+                     151    151 BEGIN:  
+2218  31 d4 19       152    152         LD      SP,STAK         ;INIT SP
+221b  ed 5e          153    153         IM      2               ;VECTOR INTERRUPT MODE
+221d  3e 22          154    154         LD      A,INTVEC / 256  ;UPPER VECTOR BYTE
+221f  ed 47          155    155         LD      I,A
+2221  cd 49 22       156    156         CALL    INIT            ;INIT DEVICES (CTC & memory)
+2224  3e 01          157    157         LD      A, 1
+2226  32 d6 19       158    158         LD      (RTCRDFL), A    ; trigger RTC read
+2229  fb             159    159         EI                      ;ALLOW INTERRUPTS
+                     160    160 
+                     161    161 LOOP:        
+222a  3a d5 19       162    162         LD      A, (SECFLAG)
+222d  fe 01          163    163         CP      1
+222f  3e 00          164    164         LD      A, 0            ; clear secflag, regardless of state
+2231  32 d5 19       165    165         LD      (SECFLAG), A
+2234  c2 44 22       166    166         JP      NZ, NO_SEC     ; part below only once per second
+2237  3a d6 19       167    167         LD      A, (RTCRDFL)
+223a  fe 01          168    168         CP      1
+223c  20 03          169    169         JR      NZ, NO_RTC      ; 
+223e  cd 01 23       170    170         CALL    READ_C
+                     171    171 NO_RTC:                         ; no RTC access
+2241  cd 8b 22       172    172         CALL    UPDTIME
+                     173    173 NO_SEC:                         ; no second passed
+2244  cd c7 22       174    174         CALL    DSP             ; Show time on display
+2247  18 e1          175    175         JR      LOOP            ;LOOP FOREVER
+                     176    176         
+                     177    177 INIT:
+                     178    178 ; PIO Channel pre-config
+2249  3e 03          179    179         LD      A, PIOIDW
+224b  d3 82          180    180         OUT     (PIOCA), A  ; channel A interrupt disable
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 4
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+224d  d3 83          181    181         OUT     (PIOCB), B  ; channel B interrupt disable
+                     182    182         
+                     183    183 ; PIO Channel A final configuration, address & control port
+224f  3e 00          184    184         LD      A, 0h
+2251  d3 80          185    185         OUT     (R_ADCT), A  ; zero addr/ctrl before setting output mode
+2253  3e 0f          186    186         LD      A, PIODW
+2255  d3 82          187    187         OUT     (R_ACDR), A   ; addr/ctrl port, channel A output mode
+                     188    188         
+                     189    189 ; PIO Channel B initial configuration, data port 
+2257  3e 00          190    190         LD      A, 0h
+2259  d3 80          191    191         OUT     (R_ADCT), A   ; zero data before setting output mode
+225b  3e 4f          192    192         LD      A, PIODR
+225d  d3 83          193    193         OUT     (R_DDRR), A   ; data port, channel B input mode
+                     194    194 
+                     195    195 ; CTC0 init 
+225f  3e a7          196    196         LD      A, INTEN + P256 + TCLOAD + RESET + CCW
+2261  d3 40          197    197         OUT     (CTC0), A       ;SET CTC MODE
+2263  3e 54          198    198         LD      A, TIMER
+2265  d3 40          199    199         OUT     (CTC0), A       ;SET TIME CONSTANT
+2267  3e 10          200    200         LD      A, INTVEC & 11111110b
+2269  d3 40          201    201         OUT     (CTC0), A       ;SET VECTOR VALUE
+226b  3e 53          202    202         LD      A, COUNTER      ;INIT COUNTER VALUE
+226d  32 d4 19       203    203         LD      (COUNT), A
+2270  af             204    204         XOR      A
+2271  32 d5 19       205    205         LD      (SECFLAG), A
+                     206    206         
+                     207    207 ; display memory init
+2274  32 8e 19       208    208         LD      (DISPBUF), A     ; clear display buffer
+2277  32 8f 19       209    209         LD      (DISPBUF + 1), A
+227a  32 90 19       210    210         LD      (DISPBUF + 2), A
+227d  32 91 19       211    211         LD      (DISPBUF + 3), A
+2280  32 92 19       212    212         LD      (DISPBUF + 4), A
+2283  32 93 19       213    213         LD      (DISPBUF + 5), A
+                     214    214         
+2286  3e 55          215    215         LD      A, 01010101b
+2288  d3 c0          216    216         OUT     (LITES), A
+                     217    217         
+228a  c9             218    218         RET
+                     219    219         
+                     220    220 UPDTIME:
+                     221    221         ; update seconds up to 60
+                     222    222         ; update minutes up to 60 when seconds == 60, reset seconds
+                     223    223         ; update hours up to 24 when minutes == 60, reset minutes
+                     224    224         ; update date when hours == 24, reset hours
+                     225    225         ; ....
+228b  3a 87 19       226    226         LD      A, (RB_SC)
+228e  3c             227    227         INC     A
+228f  fe 3c          228    228         CP      60
+2291  28 05          229    229         JR      Z, UT_S0
+2293  32 87 19       230    230         LD      (RB_SC), A
+2296  18 2e          231    231         JR      UPDDONE
+                     232    232         
+                     233    233 UT_S0:
+2298  3e 00          234    234         LD      A, 0
+229a  32 87 19       235    235         LD      (RB_SC), A          ; set seconds to zero
+229d  3a 88 19       236    236         LD      A, (RB_MI)
+22a0  3c             237    237         INC     A                   ; update minutes
+22a1  fe 3c          238    238         CP      60
+22a3  28 05          239    239         JR      Z, UT_M0
+22a5  32 88 19       240    240         LD      (RB_MI), A
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 5
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+22a8  18 1c          241    241         JR      UPDDONE
+                     242    242         
+                     243    243 UT_M0:
+22aa  3e 01          244    244         LD      A, 1
+22ac  32 d6 19       245    245         LD      (RTCRDFL), A        ; set flag to trigger RTC read
+22af  3e 00          246    246         LD      A, 0
+22b1  32 88 19       247    247         LD      (RB_MI), A          ; set minutes to zero
+22b4  3a 89 19       248    248         LD      A, (RB_HR)
+22b7  3c             249    249         INC     A                   ; update hours
+22b8  fe 18          250    250         CP      24
+22ba  28 05          251    251         JR      Z, UT_H0
+22bc  32 89 19       252    252         LD      (RB_HR), A
+22bf  18 05          253    253         JR      UPDDONE
+                     254    254         
+                     255    255 UT_H0:     ; date update not implemented yet; 
+22c1  3e 00          256    256         LD      A, 0
+22c3  32 89 19       257    257         LD      (RB_HR), A          ; set hours to zero
+                     258    258 
+                     259    259 UPDDONE:
+22c6  c9             260    260         RET
+                     261    261 
+                     262    262 DSP:
+22c7  21 8e 19       263    263         LD      HL, DISPBUF      ; point to rightmost value
+22ca  01 87 19       264    264         LD      BC, RTCBUF
+22cd  0a             265    265         LD      A, (BC)
+22ce  cd 3e 24       266    266         CALL    BIN2BCD
+22d1  cd 78 06       267    267         CALL    HEX7SEG
+22d4  cd ef 22       268    268         CALL    POINTM
+22d7  03             269    269         INC     BC              ; points to minutes value
+22d8  0a             270    270         LD      A, (BC)
+22d9  cd 3e 24       271    271         CALL    BIN2BCD
+22dc  cd 78 06       272    272         CALL    HEX7SEG
+22df  03             273    273         INC     BC              ; points to hours value
+22e0  0a             274    274         LD      A, (BC)
+22e1  cd 3e 24       275    275         CALL    BIN2BCD
+22e4  cd 78 06       276    276         CALL    HEX7SEG
+                     277    277        
+22e7  dd 21 8e 19    278    278         LD      IX, DISPBUF
+22eb  cd 24 06       279    279         CALL    SCAN1           ; call ROM display routine
+                     280    280         
+22ee  c9             281    281         RET
+                     282    282         
+                     283    283 POINTM:
+22ef  f5             284    284         PUSH    AF
+22f0  3a d7 19       285    285         LD      A, (POINTON)
+22f3  c6 00          286    286         ADD     A, 0
+22f5  28 08          287    287         JR      Z, PNTMNOT
+22f7  3a 8e 19       288    288         LD      A, (DISPBUF)
+22fa  f6 40          289    289         OR      POINTBT
+22fc  32 8e 19       290    290         LD      (DISPBUF), A
+                     291    291 PNTMNOT:
+22ff  f1             292    292         POP     AF
+2300  c9             293    293         RET
+                     294    294         
+                     295    295 READ_C:
+2301  3e 01          296    296         LD      A, 1
+2303  32 d7 19       297    297         LD      (POINTON), A    ; set flag for the rightmost display dot
+                     298    298         
+2306  3e 4f          299    299         LD      A, PIODR
+2308  d3 83          300    300         OUT     (R_DDRR), A  ; data port, channel B input mode
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 6
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+230a  3e 10          301    301         LD      A, RTCHOLD
+230c  d3 80          302    302         OUT     (R_ADCT), A  ; assert HOLD
+230e  cd 25 24       303    303         CALL    WAIT150u
+                     304    304         
+2311  21 87 19       305    305         LD      HL, RTCBUF
+2314  3e 00          306    306         LD      A, SC1AD    ; second nibbles
+2316  cd 78 23       307    307         CALL    RD2NIB
+2319  cd 2e 24       308    308         CALL    BCD2BIN
+231c  77             309    309         LD      (HL), A     ; store in buffer
+                     310    310         
+231d  23             311    311         INC     HL
+231e  3e 02          312    312         LD      A, MI1AD    ; minute nibbles
+2320  cd 78 23       313    313         CALL    RD2NIB
+2323  e6 7f          314    314         AND     RTC_MIM
+2325  cd 2e 24       315    315         CALL    BCD2BIN
+2328  77             316    316         LD      (HL), A     ; store in buffer
+                     317    317         
+2329  d3 c0          318    318         OUT     (LITES), A  ; debug 
+                     319    319         
+232b  23             320    320         INC     HL
+232c  3e 04          321    321         LD      A, HR1AD
+232e  cd 78 23       322    322         CALL    RD2NIB      ; hour nibbles
+2331  e6 3f          323    323         AND     RTC_HRM     ; mask off PM & 24h bits
+2333  cd 2e 24       324    324         CALL    BCD2BIN
+2336  77             325    325         LD      (HL), A     ; store in buffer
+                     326    326         
+2337  23             327    327         INC     HL
+2338  3e 06          328    328         LD      A, WDAD     ; week-day nibble
+233a  cd 63 23       329    329         CALL    RD1NIB
+233d  77             330    330         LD      (HL), A     ; store in buffer
+                     331    331         
+233e  23             332    332         INC     HL
+233f  3e 07          333    333         LD      A, DY1AD    ; day-of month nibbles
+2341  cd 78 23       334    334         CALL    RD2NIB
+2344  e6 bf          335    335         AND     RTC_DYM     ; mask leap year flag
+2346  cd 2e 24       336    336         CALL    BCD2BIN
+2349  77             337    337         LD      (HL), A     ; store in buffer
+                     338    338         
+234a  23             339    339         INC     HL
+234b  3e 09          340    340         LD      A, MO1AD    ; month nibbles
+234d  cd 78 23       341    341         CALL    RD2NIB
+2350  cd 2e 24       342    342         CALL    BCD2BIN
+2353  77             343    343         LD      (HL), A     ; store in buffer
+                     344    344         
+2354  23             345    345         INC     HL
+2355  3e 0b          346    346         LD      A, YR1AD    ; year in century nibbles
+2357  cd 78 23       347    347         CALL    RD2NIB
+235a  cd 2e 24       348    348         CALL    BCD2BIN
+235d  77             349    349         LD      (HL), A     ; store in buffer
+                     350    350 
+235e  3e 00          351    351         LD      A, 0
+2360  d3 80          352    352         OUT     (R_ADCT), A  ; de-assert HOLD
+                     353    353                 
+2362  c9             354    354         RET
+                     355    355       
+                     356    356 RD1NIB:                     ; read one nibble, expects RTC address in A, 
+2363  c5             357    357         PUSH    BC
+2364  f6 10          358    358         OR      RTCHOLD
+2366  4f             359    359         LD      C, A        ; keep address + HOLD
+2367  d3 80          360    360         OUT     (R_ADCT), A  ; address + HOLD out
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 7
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+2369  f6 30          361    361         OR      RTCHOLD | RTCREAD
+236b  d3 80          362    362         OUT     (R_ADCT), A  ; address + HOLD + READ out
+                     363    363         
+236d  db 81          364    364         IN      A, (R_DATA)  ; data in
+236f  e6 0f          365    365         AND     RTCDMSK     ; mask upper nibble
+2371  47             366    366         LD      B, A        ; keep value from RTC
+2372  79             367    367         LD      A, C
+2373  d3 80          368    368         OUT     (R_ADCT), A  ; address + HOLD out
+2375  78             369    369         LD      A, B
+                     370    370         
+2376  c1             371    371         POP     BC
+2377  c9             372    372         RET
+                     373    373 
+                     374    374 RD2NIB:                     ; read two consecutive nibbles, expects 
+                     375    375                             ; first RTC address in A
+2378  c5             376    376         PUSH    BC
+2379  47             377    377         LD      B, A        ; keep address
+237a  cd 63 23       378    378         CALL    RD1NIB
+237d  4f             379    379         LD      C, A        ; keep lower nibble
+237e  78             380    380         LD      A, B        ; restore address
+237f  3c             381    381         INC     A           ; point to next
+2380  cd 63 23       382    382         CALL    RD1NIB
+2383  cb 07          383    383         RLC     A           ; shift to upper nibble
+2385  cb 07          384    384         RLC     A
+2387  cb 07          385    385         RLC     A
+2389  cb 07          386    386         RLC     A
+238b  b1             387    387         OR      C           ; combine nibbles
+238c  c1             388    388         POP     BC
+238d  c9             389    389         RET
+                     390    390         
+                     391    391 WRITE_R:
+238e  cd 92 23       392    392         CALL    WRITE_C
+2391  c7             393    393         RST     0
+                     394    394         
+                     395    395 WRITE_C:
+2392  3e 0f          396    396         LD      A, PIODW
+2394  d3 83          397    397         OUT     (R_DDRR), A  ; data port, channel B output mode
+2396  3e 10          398    398         LD      A, RTCHOLD
+2398  d3 80          399    399         OUT     (R_ADCT), A
+239a  cd 25 24       400    400         CALL    WAIT150u
+                     401    401         
+239d  21 87 19       402    402         LD      HL, RB_SC
+23a0  7e             403    403         LD      A, (HL)
+23a1  cd 3e 24       404    404         CALL    BIN2BCD
+23a4  47             405    405         LD      B, A
+23a5  3e 10          406    406         LD      A, SC1AD | RTCHOLD   ; second nibbles
+23a7  cd 08 24       407    407         CALL    WR2NIB
+                     408    408         
+23aa  23             409    409         INC     HL                    ; RB_MI
+23ab  7e             410    410         LD      A, (HL)
+23ac  cd 3e 24       411    411         CALL    BIN2BCD
+23af  47             412    412         LD      B, A
+23b0  3e 12          413    413         LD      A, MI1AD | RTCHOLD    ; minute nibbles
+23b2  cd 08 24       414    414         CALL    WR2NIB
+                     415    415         
+23b5  23             416    416         INC     HL                    ; RB_HR
+23b6  7e             417    417         LD      A, (HL)
+23b7  cd 1a 24       418    418         CALL    CALCPM
+23ba  cd 3e 24       419    419         CALL    BIN2BCD
+23bd  b1             420    420         OR      C                   ; add the 24 hour and optional PM clock bits
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 8
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+23be  47             421    421         LD      B, A
+23bf  3e 14          422    422         LD      A, HR1AD | RTCHOLD
+23c1  cd 08 24       423    423         CALL    WR2NIB              ; hour nibbles
+                     424    424         
+23c4  23             425    425         INC     HL
+23c5  7e             426    426         LD      A, (HL)
+23c6  cd 3e 24       427    427         CALL    BIN2BCD
+23c9  47             428    428         LD      B, A
+23ca  3e 16          429    429         LD      A, WDAD | RTCHOLD     ; day-of-week nibble
+23cc  cd f9 23       430    430         CALL    WR1NIB
+                     431    431 
+23cf  23             432    432         INC     HL
+23d0  7e             433    433         LD      A, (HL)
+23d1  cd 3e 24       434    434         CALL    BIN2BCD
+23d4  47             435    435         LD      B, A
+23d5  3e 17          436    436         LD      A, DY1AD | RTCHOLD
+23d7  cd 08 24       437    437         CALL    WR2NIB              ; day-of-month nibbles
+                     438    438         
+23da  23             439    439         INC     HL
+23db  7e             440    440         LD      A, (HL)
+23dc  cd 3e 24       441    441         CALL    BIN2BCD
+23df  47             442    442         LD      B, A
+23e0  3e 19          443    443         LD      A, MO1AD | RTCHOLD
+23e2  cd 08 24       444    444         CALL    WR2NIB              ; month nibbles
+                     445    445         
+23e5  23             446    446         INC     HL
+23e6  7e             447    447         LD      A, (HL)
+23e7  cd 3e 24       448    448         CALL    BIN2BCD
+23ea  47             449    449         LD      B, A
+23eb  3e 1b          450    450         LD      A, YR1AD | RTCHOLD
+23ed  cd 08 24       451    451         CALL    WR2NIB              ; year-in-century nibbles
+                     452    452         
+23f0  3e 00          453    453         LD      A, 0
+23f2  d3 80          454    454         OUT     (R_ADCT), A  ; de-assert HOLD
+                     455    455         
+23f4  3e 4f          456    456         LD      A, PIODR
+23f6  d3 83          457    457         OUT     (R_DDRR), A  ; data port, channel B input mode
+                     458    458 
+23f8  c9             459    459         RET
+                     460    460         
+                     461    461 WR1NIB:                       ; write a nibble from (HL) to RTC
+23f9  d3 80          462    462         OUT     (R_ADCT), A   ; address & hold out
+23fb  0e 81          463    463         LD      C, R_DATA
+23fd  ed 41          464    464         OUT     (C), B        ; data out
+23ff  f6 40          465    465         OR      RTCWRIT
+2401  d3 80          466    466         OUT     (R_ADCT), A   ; assert write
+2403  e6 bf          467    467         AND     RTCNOWR       
+2405  d3 80          468    468         OUT     (R_ADCT), A   ; de-assert write
+                     469    469 
+2407  c9             470    470         RET
+                     471    471 
+                     472    472 WR2NIB:                     ; write nibbles from (HL) and (HL+1) to RTC
+2408  f5             473    473         PUSH    AF          ; save RTC address
+2409  cd f9 23       474    474         CALL    WR1NIB
+240c  f1             475    475         POP     AF          ; restore RTC address
+240d  3c             476    476         INC     A           ; point to next 10's address, HOLD not effected
+240e  cb 08          477    477         RRC     B
+2410  cb 08          478    478         RRC     B
+2412  cb 08          479    479         RRC     B
+2414  cb 08          480    480         RRC     B
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 9
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+2416  cd f9 23       481    481         CALL    WR1NIB
+2419  c9             482    482         RET
+                     483    483         
+                     484    484 CALCPM:
+241a  f5             485    485         PUSH    AF
+241b  0e 80          486    486         LD      C, RTC_24h  ; preset for AM pattern
+241d  fe 0c          487    487         CP      12
+241f  38 02          488    488         JR      C, CPLOW
+2421  0e c0          489    489         LD      C, RTC_24h | RTC_PM ; override with PB pattern
+                     490    490 CPLOW:
+2423  f1             491    491         POP     AF
+2424  c9             492    492         RET
+                     493    493 
+                     494    494 WAIT150u:
+2425  f5             495    495         PUSH    AF
+2426  c5             496    496         PUSH    BC
+2427  06 15          497    497         LD      B, W150C
+                     498    498 W150LP:
+2429  10 fe          499    499         DJNZ    W150LP         ; Wait
+242b  c1             500    500         POP     BC
+242c  f1             501    501         POP     AF
+242d  c9             502    502         RET
+                     503    503 
+                     504    504 BCD2BIN:
+                     505    505         ; input; A contains 2 BCD digits - MSN and LSN
+                     506    506         ; output; A contains a binary value
+242e  c5             507    507         PUSH    BC
+242f  f5             508    508         PUSH    AF
+2430  e6 f0          509    509         AND     0F0h    ; create MSN value only
+2432  0f             510    510         RRCA
+2433  4f             511    511         LD      C, A    ; keep MSN * 8 
+2434  0f             512    512         RRCA
+2435  0f             513    513         RRCA
+2436  81             514    514         ADD     A, C    ; add MSN * 2 to MSN * 8
+2437  4f             515    515         LD      C, A    ; keep the MSN * 10
+2438  f1             516    516         POP     AF
+2439  e6 0f          517    517         AND     00Fh    ; create LSN value only
+243b  81             518    518         ADD     A, C       ; create complete binary value
+243c  c1             519    519         POP     BC
+243d  c9             520    520         RET
+                     521    521         
+                     522    522 BIN2BCD:
+                     523    523         ; input; A contains a binary value less than 100 (MSNb & LSNb)
+                     524    524         ; output; A contains two BCD digits - MSN and LSN
+243e  c5             525    525         PUSH    BC
+243f  06 00          526    526         LD      B, 0            ; start with zero MSB
+2441  d6 0a          527    527 BI2BLP  SUB     10
+2443  da 49 24       528    528         JP      C, BI2BRY       ; done counting 10s
+2446  04             529    529         INC     B
+2447  18 f8          530    530         JR      BI2BLP          ; continue until A < 10
+2449  c6 0a          531    531 BI2BRY  ADD     A, 10           ; compensate 
+244b  cb 00          532    532         RLC     B               ; move 10s to upper nibble
+244d  cb 00          533    533         RLC     B
+244f  cb 00          534    534         RLC     B
+2451  cb 00          535    535         RLC     B
+2453  80             536    536         ADD     A, B            ; merge nibbles
+2454  c1             537    537         POP     BC
+                     538    538 
+2455  c9             539    539         RET
+                     540    540         
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 10
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+                     541    541 SETRBUF:
+2456  dd 21 80 19    542    542         LD      IX, MANBUF      ; point to RTCBUF seconds
+245a  dd 7e 00       543    543         LD      A, (IX + 0)     ; load from MANBUF seconds
+245d  cd 2e 24       544    544         CALL    BCD2BIN
+2460  dd 77 07       545    545         LD      (IX + MROFFS), A     ; store to RTCBUF seconds
+2463  dd 23          546    546         INC     IX
+                     547    547         
+2465  dd 7e 00       548    548         LD      A, (IX + 0)     ; minutes
+2468  cd 2e 24       549    549         CALL    BCD2BIN
+246b  dd 77 07       550    550         LD      (IX + MROFFS), A  ; 
+246e  dd 23          551    551         INC     IX
+                     552    552         
+2470  dd 7e 00       553    553         LD      A, (IX + 0)     ; hours
+2473  cd 2e 24       554    554         CALL    BCD2BIN
+2476  dd 77 07       555    555         LD      (IX + MROFFS), A  ; 
+2479  dd 23          556    556         INC     IX
+                     557    557 
+247b  dd 7e 00       558    558         LD      A, (IX + 0)  ; day of week
+247e  cd 2e 24       559    559         CALL    BCD2BIN
+2481  dd 77 07       560    560         LD      (IX + MROFFS), A  ; 
+2484  dd 23          561    561         INC     IX
+                     562    562 
+2486  dd 7e 00       563    563         LD      A, (IX + 0)  ; day of month
+2489  cd 2e 24       564    564         CALL    BCD2BIN
+248c  dd 77 07       565    565         LD      (IX + MROFFS), A  ; 
+248f  dd 23          566    566         INC     IX
+                     567    567 
+2491  dd 7e 00       568    568         LD      A, (IX + 0)  ; months
+2494  cd 2e 24       569    569         CALL    BCD2BIN
+2497  dd 77 07       570    570         LD      (IX + MROFFS), A  ; 
+249a  dd 23          571    571         INC     IX
+                     572    572        
+249c  dd 7e 00       573    573         LD      A, (IX + 0)  ; years
+249f  cd 2e 24       574    574         CALL    BCD2BIN
+24a2  dd 77 07       575    575         LD      (IX + MROFFS), A  ; 
+24a5  dd 23          576    576         INC     IX
+                     577    577         
+24a7  cd 92 23       578    578         CALL    WRITE_C
+                     579    579 ;        RST     0               ; return to monitor
+                     580    580 ;        JP      READ_C
+24aa  c9             581    581         RET
+                     582    582 
+                     583    583 ;       INTERRUPT SERVICE ROUTINES 
+                     584    584 
+                     585    585 ICTC1:
+                     586    586 ICTC2:
+                     587    587 ICTC3:
+24ab  fb             588    588         EI
+24ac  ed 4d          589    589         RETI                    ;DUMMY ROUTINES
+                     590    590         
+                     591    591 ICTC0:
+24ae  f5             592    592         PUSH    AF
+24af  3a d4 19       593    593         LD      A, (COUNT)      ;CHANGE TIMER COUNT
+24b2  3d             594    594         DEC     A
+24b3  32 d4 19       595    595         LD      (COUNT), A
+24b6  fe 00          596    596         CP      0
+24b8  20 0a          597    597         JR      NZ, IC0DONE     ; (COUNT) not yet zero, exit ISR
+24ba  3e 53          598    598         LD      A, COUNTER      ;ELSE, RESET COUNTER VALUE
+24bc  32 d4 19       599    599         LD      (COUNT), A
+                     600    600         
+Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 11
+Source file: rtcClock2.asm
+Title:       
+
+LOC   OBJECT CODE   LINE   STMT SOURCE CODE
+24bf  3e 01          601    601         LD      A, 1
+24c1  32 d5 19       602    602         LD      (SECFLAG), A
+                     603    603         
+                     604    604 IC0DONE:
+24c4  f1             605    605         POP     AF
+24c5  fb             606    606         EI
+24c6  ed 4d          607    607         RETI
+                     608    608 
+24c8                 609    609         END
