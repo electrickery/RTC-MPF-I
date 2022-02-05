@@ -1,4 +1,4 @@
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 1
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 1
 Source file: rtcClock2.asm
 Title:       
 
@@ -63,7 +63,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
                       58     58 ; Z80 PIO bits to MSM5832 RTC pin mapping
 0010                  59     59 RTCHOLD EQU     010h
 0020                  60     60 RTCREAD EQU     020h
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 2
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 2
 Source file: rtcClock2.asm
 Title:       
 
@@ -128,7 +128,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
 1994                 118    118         DEFS    64      ;STACK AREA
 19d4                 119    119 STAK:   EQU     $
 19d4                 120    120 COUNT:  DEFS    1       ;ICT COUNT VALUE
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 3
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 3
 Source file: rtcClock2.asm
 Title:       
 
@@ -193,7 +193,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
                      178    178 ; PIO Channel pre-config
 2249  3e 03          179    179         LD      A, PIOIDW
 224b  d3 82          180    180         OUT     (PIOCA), A  ; channel A interrupt disable
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 4
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 4
 Source file: rtcClock2.asm
 Title:       
 
@@ -258,7 +258,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
 22a1  fe 3c          238    238         CP      60
 22a3  28 05          239    239         JR      Z, UT_M0
 22a5  32 88 19       240    240         LD      (RB_MI), A
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 5
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 5
 Source file: rtcClock2.asm
 Title:       
 
@@ -323,7 +323,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
                      298    298         
 2306  3e 4f          299    299         LD      A, PIODR
 2308  d3 83          300    300         OUT     (R_DDRR), A  ; data port, channel B input mode
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 6
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 6
 Source file: rtcClock2.asm
 Title:       
 
@@ -388,7 +388,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
 2364  f6 10          358    358         OR      RTCHOLD
 2366  4f             359    359         LD      C, A        ; keep address + HOLD
 2367  d3 80          360    360         OUT     (R_ADCT), A  ; address + HOLD out
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 7
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 7
 Source file: rtcClock2.asm
 Title:       
 
@@ -453,7 +453,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
 23b7  cd 1a 24       418    418         CALL    CALCPM
 23ba  cd 3e 24       419    419         CALL    BIN2BCD
 23bd  b1             420    420         OR      C                   ; add the 24 hour and optional PM clock bits
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 8
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 8
 Source file: rtcClock2.asm
 Title:       
 
@@ -518,7 +518,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
 2410  cb 08          478    478         RRC     B
 2412  cb 08          479    479         RRC     B
 2414  cb 08          480    480         RRC     B
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 9
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 9
 Source file: rtcClock2.asm
 Title:       
 
@@ -583,7 +583,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
                      538    538 
 2455  c9             539    539         RET
                      540    540         
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 10
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 10
 Source file: rtcClock2.asm
 Title:       
 
@@ -648,7 +648,7 @@ LOC   OBJECT CODE   LINE   STMT SOURCE CODE
 24ba  3e 53          598    598         LD      A, COUNTER      ;ELSE, RESET COUNTER VALUE
 24bc  32 d4 19       599    599         LD      (COUNT), A
                      600    600         
-Z80-Assembler	Release 1.9	Sat Feb  5 16:57:24 2022	Page 11
+Z80-Assembler	Release 1.9	Sat Feb  5 17:30:24 2022	Page 11
 Source file: rtcClock2.asm
 Title:       
 
