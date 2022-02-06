@@ -1,9 +1,11 @@
 # RTC-MPF-I
-A Real Time Clock for the Microprofessor based on a MSM5832
+A Real Time Clock for the Microprofessor based on an MSM5832
 
 This used the Z80-PIO to interface the MSM5832. Currently only the 
 rudiments are implemented to write and read the RTC and display time
-and date.
+and date. For the time display routine, a second-sized interval 
+interrupt is generated using the Z80-CTC. The RTC is read every 
+minute.
 
 The hardware diagram:
 ![Schema of the RTC board](./RTC_MPF.sch.pdf)
